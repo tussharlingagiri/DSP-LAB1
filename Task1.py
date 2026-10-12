@@ -2,7 +2,6 @@ import numpy as np
 import matplotlib.pyplot as plt
 from scipy.io import wavfile
 
-
 REC = {
     '5cm': dict(file='Assignment_1_audio_5cm.wav',
                 vowels=[(0.43, 0.67), (1.00, 1.13)],
@@ -20,8 +19,6 @@ REC = {
                 noise_low=80, noise_high=15000),
 }
 
-
-
 def load(path):
     fs, x = wavfile.read(path)
     if x.ndim > 1:
@@ -29,19 +26,14 @@ def load(path):
     x = x.astype(np.float64)
     return fs, x / np.max(np.abs(x))
 
-
 def spectrum_dB(x, fs):
     N = len(x)
     X = np.fft.fft(x)[:N // 2] / N            
     f = np.arange(N // 2) * fs / N           
     return f[1:], 20 * np.log10(np.abs(X[1:]) + 1e-12)
 
-
 def seg(x, fs, t0, t1):
     return x[int(t0 * fs):int(t1 * fs)]
-
-
-
 
 # ---- REQUIRED ---------------------------------------------------------------
 def plot_time(x, fs, key):
@@ -50,8 +42,6 @@ def plot_time(x, fs, key):
     plt.xlabel('Time [s]'); plt.ylabel('Normalised amplitude')
     plt.title(f'Time domain ({key})')
   
-
-
 def plot_annotated(x, fs, key, c):
     f, m = spectrum_dB(x, fs)
     plt.figure(figsize=(10, 6))
@@ -68,8 +58,6 @@ def plot_annotated(x, fs, key, c):
     plt.title(f'Annotated spectrum ({key})')
     plt.legend(loc='lower left', fontsize=8)
  
-
-
 # ---- SUPPORTING -------------------------------------------------------------
 def plot_spectrogram(x, fs, key, win=1024, hop=512):
     w = 0.5 - 0.5 * np.cos(2 * np.pi * np.arange(win) / win)    # Hann window
@@ -81,8 +69,6 @@ def plot_spectrogram(x, fs, key, win=1024, hop=512):
     plt.xlabel('Time [s]'); plt.ylabel('Frequency [Hz]')
     plt.title(f'Spectrogram, full range ({key})')
    
-
-
 def plot_vowel(x, fs, t0, t1, key):
     f, m = spectrum_dB(seg(x, fs, t0, t1), fs)
     plt.figure()
@@ -90,7 +76,6 @@ def plot_vowel(x, fs, t0, t1, key):
     plt.xlim(50, 2000)
     plt.xlabel('Frequency [Hz]'); plt.ylabel('Magnitude [dB]')
     plt.title(f'Vowel {t0:.2f}-{t1:.2f} s ({key})')
-
 
 def plot_overlay(x, fs, speech, noise, key):
     plt.figure()
@@ -100,8 +85,6 @@ def plot_overlay(x, fs, speech, noise, key):
     plt.xlabel('Frequency [Hz]'); plt.ylabel('Magnitude [dB]')
     plt.title(f'Consonant vs noise ({key})'); plt.legend()
   
-
-
 data = {k: load(c['file']) for k, c in REC.items()}
 
 for key, c in REC.items():

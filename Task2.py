@@ -37,17 +37,7 @@ def load(path):
     # return fs, x / np.max(np.abs(x))
     return fs, x / 2147483647.0
 
-
-def spectrum_dB(x, fs):
-    N = len(x)
-    X = np.fft.fft(x)[:N // 2] / N            
-    f = np.arange(N // 2) * fs / N
-    # for i in range(len(X)):
-        # print(X[i])
-        # X[i+initial_bin] = 0 # actual filtering part
-    return f[1:], 20 * np.log10(np.abs(X[1:]) + 1e-12)
-
-def filter_bandwidth(initial_frequency,final_frequency,x,fs):
+def filter_bandwidth_start(initial_frequency,final_frequency,x,fs, key):
     N = len(x) #Number of samples
     print("N:", N)
     X = np.fft.fft(x) #fft of audio signal
@@ -56,12 +46,35 @@ def filter_bandwidth(initial_frequency,final_frequency,x,fs):
     
     k_initial = int(initial_frequency / f_res)
     k_final = int(final_frequency / f_res)
-    X[k_initial:k_final] = 0 # temp amplification of audio signal
-    
+    X[0:k_final] = 1e-12 # temp amplification of audio signal
+    X[-k_final:] = 1e-12
     # X_2 = np.fft.fft(x)[:N // 2] / N
     # X_2[k_initial:k_final] = 0 # temp amplification of audio signal
     # f = np.arange(N // 2) * f_res
     # X_mag = 20 * np.log10(np.abs(X_2[1:]) + 1e-12)
+    # plt.plot(f[1:],X_mag)
+    # plot_annotated(x, fs, key, c, f[1:], X_mag)
+
+    X_filtered = np.fft.ifft(X).real # inverse fft of adjusted signal
+    print("filtered X:", len(X_filtered))
+    return X_filtered # outputting a complex output array
+
+def filter_bandwidth_end(initial_frequency,final_frequency,x,fs, key):
+    N = len(x) #Number of samples
+    print("N:", N)
+    X = np.fft.fft(x) #fft of audio signal
+    print("X:", len(X))
+    f_res = fs / N
+    
+    k_initial = int(initial_frequency / f_res)
+    k_final = int(final_frequency / f_res)
+    X[k_initial:k_final] = 1e-12 # temp amplification of audio signal
+    X[-k_final:-k_initial] = 1e-12
+    # X_2 = np.fft.fft(x)[:N // 2] / N
+    # X_2[k_initial:k_final] = 0 # temp amplification of audio signal
+    # f = np.arange(N // 2) * f_res
+    # X_mag = 20 * np.log10(np.abs(X_2[1:]) + 1e-12)
+    # plt.plot(f[1:],X_mag)
     # plot_annotated(x, fs, key, c, f[1:], X_mag)
 
     X_filtered = np.fft.ifft(X).real # inverse fft of adjusted signal
@@ -70,42 +83,43 @@ def filter_bandwidth(initial_frequency,final_frequency,x,fs):
 
 def filter_magnitude(x, fs, modifier):
     N = len(x) #Number of samples
-    print("N:", N)
     X = np.fft.fft(x) #fft of audio signal
-    PSD = X * np.conj(X)
+    PSD = np.abs(X) ** 2
     PSD_norm = PSD / np.max(PSD)
     frequency = (fs/N) * np.arange(N)
     L = np.arange(1,np.floor(N/2),dtype='int')
-    print("X:", len(X))
+    f_res = fs / N
 
+    plt.figure()
+    # PSD_db = 10 * np.log10(PSD_norm[L] + 1e-12)
+    # plt.plot(frequency[L], PSD_db)
     plt.plot(frequency[L], PSD_norm[L])
-    # f_res = fs / N
 
-    X_filter = PSD_norm > modifier
     PSD_norm[int(-len(PSD_norm)/2):] = PSD_norm[:int(len(PSD_norm)/2)][::-1]
+
+    X_filter = np.where(PSD_norm > modifier, 1.0, 0.01) 
+
+    # PSD_norm[int(-len(PSD_norm)/2):] = PSD_norm[:int(len(PSD_norm)/2)][::-1]
 
     print(len(X_filter))
     print(len(X))
     X = X * X_filter
 
-    PSD_norm = X * np.conj(X) / np.max(PSD)
+    plt.figure()
+    # PSD_norm = X * np.conj(X) / np.max(PSD)
+    X_2 = X[:N // 2] / N
+    f = np.arange(N // 2) * f_res
+    X_mag = 20 * np.log10(np.abs(X_2[1:]) + 1e-12)
+    plt.plot(f[1:],X_mag)
 
-    plt.plot(frequency[L], PSD_norm[L])
-    
-    # k_initial = int(initial_frequency / f_res)
-    # k_final = int(final_frequency / f_res)
-    # X[k_initial:k_final] = 0 # temp amplification of audio signal
-    
-    # X_2 = np.fft.fft(x)[:N // 2] / N
-    # X_2[k_initial:k_final] = 0 # temp amplification of audio signal
-    # f = np.arange(N // 2) * f_res
-    # X_mag = 20 * np.log10(np.abs(X_2[1:]) + 1e-12)
-    # plot_annotated(x, fs, key, c, f[1:], X_mag)
-    # plt.plot(frequency[L], PSD[L])
+    # plt.figure()
+    # plt.plot(frequency[L], PSD_norm[L])
+
     X_filtered = np.fft.ifft(X).real # inverse fft of adjusted signal
     print("filtered X:", len(X_filtered))
     return X_filtered # outputting a complex output array
 
+    
 def boost_amplitude(initial_frequency, final_frequency, x, fs, modifier):
     N = len(x) #Number of samples
     print("N:", N)
@@ -116,12 +130,11 @@ def boost_amplitude(initial_frequency, final_frequency, x, fs, modifier):
     k_initial = int(initial_frequency / f_res)
     k_final = int(final_frequency / f_res)
     X[k_initial:k_final] *= modifier # temp amplification of audio signal
-    
+    X[-k_final:-k_initial] *= modifier
     X_filtered = np.fft.ifft(X).real # inverse fft of adjusted signal
     print("filtered X:", len(X_filtered))
     return X_filtered # outputting a complex output array
-    
-    
+
 def plot_time(x, fs, key):
     plt.figure()
     plt.plot(np.arange(len(x)) / fs, x)
@@ -164,17 +177,138 @@ def plot_boosted(x, fs, key, c):
     plt.title(f'boosted spectrum  ({key})')
     plt.legend(loc='lower left', fontsize=8)
 
+def remove_hvac_noise(x, fs, frame_size=2048, alpha=2.0, beta=0.02):
+    hop_size = frame_size // 2  # 50% overlap for smooth blending
+    N = len(x)
+
+    n = np.arange(frame_size)
+    window = window = 0.5 - 0.5 * np.cos(2 * np.pi * n / (frame_size - 1))
+    
+    # 1. Capture the noise profile from a known quiet block at the start
+    # (Make sure your audio starts with a brief pause where only the HVAC is running)
+    noise_block = x[54047:66395] * window
+    X_noise = np.fft.fft(noise_block)
+    noise_mag = np.abs(X_noise)
+    
+    output_signal = np.zeros(N)
+    
+    # 2. Loop through the entire audio file frame-by-frame
+    for i in range(0, N - frame_size, hop_size):
+        # Extract the current frame from the full audio and apply window
+        frame = x[i:i + frame_size] * window
+        
+        # Convert frame to frequency domain
+        X = np.fft.fft(frame)
+        mag = np.abs(X)
+        
+        # Isolate the phase angles so we don't distort timing/speech quality
+        phase = X / (mag + 1e-12)
+        
+        # 3. Subtract the noise profile magnitude from this frame's magnitude
+        cleaned_mag = mag - (alpha * noise_mag)
+        
+        # Apply a spectral floor (beta) so bins aren't forced to absolute zero (prevents harsh artifacts)
+        cleaned_mag = np.maximum(cleaned_mag, beta * mag)
+        
+        # 4. Reconstruct the frame using the cleaned magnitude and original phase
+        X_clean = cleaned_mag * phase
+        
+        # Inverse FFT back to time domain, window again, and add to output
+        frame_back = np.fft.ifft(X_clean).real * window
+        output_signal[i:i + frame_size] += frame_back
+        
+    return output_signal
+
 data = {k: load(c['file']) for k, c in REC.items()}
 
 for key, c in REC.items():
     fs, x = data[key]
     # plot_time(x, fs, key)
-    X = filter_magnitude(x,fs)
-    X = filter_bandwidth(8000,22050,X,fs,key)
-    X = filter_bandwidth(0,250,X,fs,key)
-    X = boost_amplitude(300,800,X,fs)
-    X = boost_amplitude(5000,8000,X,fs)
+    N = 66395
+    noise_N = N - 54047
+    f_res = 44100/N
+    f_res_noise = 44100/(66395-5404)
+    plot_time(x, fs, key)
+    X_noise = x[54047:66395]
+    Xn_fft = np.fft.fft(X_noise)[:noise_N // 2] / noise_N
+    f = np.arange(noise_N//2) * f_res_noise
+    noise_mag = 20 * np.log10(np.abs(Xn_fft[1:]) + 1e-12)
+    print(len(noise_mag))
 
+    X_filtered = remove_hvac_noise(x, fs, 66395-54047, alpha=2.0, beta=0.02)
+
+    plt.figure()
+    plt.plot(f[1:],noise_mag)
+
+    # plt.figure()
+    plot_time(X_filtered,fs,key)
+
+    # plt.figure()
+    # X_2 = np.fft.fft(x)[:N // 2] / N
+    # f = np.arange(N // 2) * f_res
+    # X_mag = 20 * np.log10(np.abs(X_2[1:]) + 1e-12)
+    # plt.plot(f[1:],X_mag)
+
+    # X = filter_magnitude(x,fs, 0.002)
+
+    # plt.figure()
+    # X_2 = np.fft.fft(X)[:N // 2] / N
+    # f = np.arange(N // 2) * f_res
+    # X_mag = 20 * np.log10(np.abs(X_2[1:]) + 1e-12)
+    # plt.plot(f[1:],X_mag)
+
+    # X = filter_bandwidth_end(6000,22050,X,fs, key)
+
+    # plt.figure()
+    # X_2 = np.fft.fft(X)[:N // 2] / N
+    # f = np.arange(N // 2) * f_res
+    # X_mag = 20 * np.log10(np.abs(X_2[1:]) + 1e-12)
+    # plt.plot(f[1:],X_mag)
+
+    # X = filter_bandwidth_end(1100,1200,X,fs, key)
+
+    # plt.figure()
+    # X_2 = np.fft.fft(X)[:N // 2] / N
+    # f = np.arange(N // 2) * f_res
+    # X_mag = 20 * np.log10(np.abs(X_2[1:]) + 1e-12)
+    # plt.plot(f[1:],X_mag)
+
+    # X = filter_bandwidth_start(0,250,X,fs, key)
+
+    # plt.figure()
+    # X_2 = np.fft.fft(X)[:N // 2] / N
+    # f = np.arange(N // 2) * f_res
+    # X_mag = 20 * np.log10(np.abs(X_2[1:]) + 1e-12)
+    # plt.plot(f[1:],X_mag)
+
+    X = boost_amplitude(250,800,X_filtered,fs, 10)
+
+    plt.figure()   
+    X_2 = np.fft.fft(X)[:N // 2] / N
+    f = np.arange(N // 2) * f_res
+    X_mag = 20 * np.log10(np.abs(X_2[1:]) + 1e-12)
+    plt.plot(f[1:],X_mag)
+
+    X = boost_amplitude(2000,6000,X,fs, 10)
+
+    plt.figure()
+    X_2 = np.fft.fft(X)[:N // 2] / N
+    f = np.arange(N // 2) * f_res
+    X_mag = 20 * np.log10(np.abs(X_2[1:]) + 1e-12)
+    plt.plot(f[1:],X_mag)
+
+    # X = filter_magnitude(X,fs, 0.0005)
+
+    # plt.figure()
+    # X_2 = np.fft.fft(X)[:N // 2] / N
+    # f = np.arange(N // 2) * f_res
+    # X_mag = 20 * np.log10(np.abs(X_2[1:]) + 1e-12)
+    # plt.plot(f[1:],X_mag)
+
+    # X_2 = np.fft.fft(X)[:N // 2] / N
+    # f = np.arange(N // 2) * f_res
+    # X_mag = 20 * np.log10(np.abs(X_2[1:]) + 1e-12)
+    # plt.plot(f[1:],X_mag)
     # plot_time(X, fs, key)         
     # print("fs:",fs)
     # print("x:",x)
@@ -182,10 +316,12 @@ for key, c in REC.items():
     #       f"samples at max={np.sum(np.abs(x) >= 0.999)}")
     # f , m = filter_bandwidth(2000,22050,x, fs)
     audio_int16 = (X * 32767).astype(np.int16)
-    wavfile.write("filtered_audio_test.wav", 44100, audio_int16)
-    # plot_time(x, fs, key)                                  
+    if key == '5cm' :
+        wavfile.write("filtered_audio_test_5cm.wav", 44100, audio_int16)
+    else: wavfile.write("filtered_audio_test_1m.wav", 44100, audio_int16)
+
+    # plot_time(x, fs, key)              
     # plot_annotated(x, fs, key, c, f, m)
     # plot_boosted(x, fs, key, c)
     # filter_bandwidth(1,3000,x,fs,key)
-    break
 plt.show()

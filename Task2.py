@@ -32,30 +32,14 @@ REC = {
 
 def load(path):
     fs, x = wavfile.read(path)
-    print(x.dtype)
     x = x.astype(np.float64)
     return fs, x / 2147483647.0
 
-def boost_amplitude(initial_frequency, final_frequency, x, fs, modifier):
-    N = len(x) #Number of samples
-    print("N:", N)
-    X = np.fft.fft(x) #fft of audio signal
-    print("X:", len(X))
-    f_res = fs / N
-    
-    k_initial = int(initial_frequency / f_res)
-    k_final = int(final_frequency / f_res)
-    X[k_initial:k_final] *= modifier # temp amplification of audio signal
-    X[-k_final:-k_initial] *= modifier
-    X_filtered = np.fft.ifft(X).real # inverse fft of adjusted signal
-    print("filtered X:", len(X_filtered))
-    return X_filtered # outputting a complex output array
-
-def plot_time(x, fs, key):
+def plot_time(x, fs, key, title):
     plt.figure()
     plt.plot(np.arange(len(x)) / fs, x)
     plt.xlabel('Time [s]'); plt.ylabel('Normalised amplitude')
-    plt.title(f'Time domain ({key})')
+    plt.title(f' {title} ({key})')
 
 def plot_annotated(x, fs, key, c, f, m):
     # f, m = spectrum_dB(x, fs)
@@ -74,16 +58,13 @@ def plot_annotated(x, fs, key, c, f, m):
     plt.title(f'Annotated spectrum ({key})')
     plt.legend(loc='lower left', fontsize=8)
 
-def remove_hvac_noise(x, fs, frame_size=2048, alpha=2.0, beta=0.02):
+def remove_hvac_noise(x, fs, N, N_initial_noise, frame_size=2048, alpha=2.0, beta=0.02):
     hop_size = frame_size // 2  # 50% overlap for smooth blending
-    N = len(x)
-
     n = np.arange(frame_size)
-    window = window = 0.5 - 0.5 * np.cos(2 * np.pi * n / (frame_size - 1))
+    window = window = 0.5 - 0.5 * np.cos(2 * np.pi * n / (frame_size - 1)) # Hanning filtering window
     
     # 1. Capture the noise profile from a known quiet block at the start
-    # (Make sure your audio starts with a brief pause where only the HVAC is running)
-    noise_block = x[54047:66395] * window
+    noise_block = x[N_initial_noise:N] * window
     X_noise = np.fft.fft(noise_block)
     noise_mag = np.abs(X_noise)
     
@@ -100,62 +81,132 @@ def remove_hvac_noise(x, fs, frame_size=2048, alpha=2.0, beta=0.02):
         
         # Isolate the phase angles so we don't distort timing/speech quality
         phase = X / (mag + 1e-12)
+        # phase = X / (mag)
         
         # 3. Subtract the noise profile magnitude from this frame's magnitude
         cleaned_mag = mag - (alpha * noise_mag)
-        
         # Apply a spectral floor (beta) so bins aren't forced to absolute zero (prevents harsh artifacts)
         cleaned_mag = np.maximum(cleaned_mag, beta * mag)
-        
         # 4. Reconstruct the frame using the cleaned magnitude and original phase
         X_clean = cleaned_mag * phase
-        
         # Inverse FFT back to time domain, window again, and add to output
         frame_back = np.fft.ifft(X_clean).real * window
         output_signal[i:i + frame_size] += frame_back
         
     return output_signal
 
+def filter_hp(initial_frequency,final_frequency,x,fs,N, key):
+    X = np.fft.fft(x) #fft of audio signal
+    f_res = fs / N
+    
+    k_final = int(final_frequency / f_res)
+    X[0:k_final] = 1e-12 # temp amplification of audio signal
+    X[-k_final:] = 1e-12
+    F_smoothing = np.arange(0,1,0.005)
+    X[k_final:k_final+200] *= F_smoothing
+    X[-(k_final+200):-k_final] *= F_smoothing[::-1] 
+    # X[0:k_final] = 0 # temp amplification of audio signal
+    # X[-k_final:] = 0
+
+
+    X_filtered = np.fft.ifft(X).real # inverse fft of adjusted signal
+    return X_filtered # outputting a complex output array
+
+def filter_lp(initial_frequency,final_frequency,x,fs, N, key):
+    X = np.fft.fft(x) #fft of audio signal
+    f_res = fs / N
+    k_initial = int(initial_frequency / f_res)
+    k_final = int(final_frequency / f_res)
+    X[k_initial:k_final] = 1e-12 # temp amplification of audio signal
+    X[-k_final:-k_initial] = 1e-12
+    
+    F_smoothing = np.arange(0,1,0.005)
+    X[k_initial-200:k_initial] *= F_smoothing[::-1]
+    X[-k_initial:-(k_initial-200)] *= F_smoothing
+    X_filtered = np.fft.ifft(X).real # inverse fft of adjusted signal
+    return X_filtered # outputting a complex output array
+
+def boost_amplitude(initial_frequency, final_frequency, x, fs,N, modifier):
+    X = np.fft.fft(x) #fft of audio signal
+    f_res = fs / N
+    k_initial = int(initial_frequency / f_res)
+    k_final = int(final_frequency / f_res)
+    X[k_initial:k_final] *= modifier # Amplification of chosen Fourier Coefficients
+    X[-k_final:-k_initial] *= modifier
+
+    Fc_smoothing = np.linspace(1,modifier,200) # Fourier Coefficient smoothing from normal power (1) towards the amplifying value
+    if k_initial-200 < 0: #If we want to boost lower than 200hz, start from 0
+        X[0:k_initial] *= Fc_smoothing[k_initial-1::-1]
+        X[-k_initial:] *= Fc_smoothing[:k_initial]
+    else:
+        X[k_initial-200:k_initial] *= Fc_smoothing[::-1]
+        X[-k_initial:-(k_initial-200)] *= Fc_smoothing
+
+    X[k_final:k_final+200] *= Fc_smoothing # No If statement required as higher frequencies will be cut 
+    X[-(k_final+200):-k_final] *= Fc_smoothing[::-1]
+
+    X_filtered = np.fft.ifft(X).real # inverse fft of adjusted signal
+    return X_filtered # outputting a complex output array
+
 data = {k: load(c['file']) for k, c in REC.items()}
 
 for key, c in REC.items():
+
     fs, x = data[key]
-    N = 66395
-    noise_N = N - 54047
-    f_res = 44100/N
-    f_res_noise = 44100/(66395-5404)
-    plot_time(x, fs, key)
-    X_noise = x[54047:66395]
+    N = len(x) # Total samples
+
+    if key == '5cm':
+        N_initial_noise = 54047 # Initial noise bin for 5cm
+    else: N_initial_noise = 68467 # Initial noise bin for 1m
+
+    noise_N = N - N_initial_noise # Sample length of Noise
+    f_res = 44100/N # Frequency Resolution Calculation
+    f_res_noise = 44100/(N-N_initial_noise) # Frequency Resoluation of Noise Block
+    X_noise = x[N_initial_noise:N]
+    noise_frame = N - N_initial_noise
+
+    plot_time(x, fs, key, "Unfiltered Audio Time Domain")
+
     Xn_fft = np.fft.fft(X_noise)[:noise_N // 2] / noise_N
+
+    plt.figure()
     f = np.arange(noise_N//2) * f_res_noise
     noise_mag = 20 * np.log10(np.abs(Xn_fft[1:]) + 1e-12)
-    print(len(noise_mag))
-
-    X_filtered = remove_hvac_noise(x, fs, 66395-54047, alpha=2.0, beta=0.02)
-
-    plt.figure()
+    # noise_mag = 20 * np.log10(np.abs(Xn_fft[1:]))
     plt.plot(f[1:],noise_mag)
 
-    # plt.figure()
-    plot_time(X_filtered,fs,key)
+    x = x*2
 
-    X = boost_amplitude(250,800,X_filtered,fs, 10)
+    X_filtered = remove_hvac_noise(x, fs, N, N_initial_noise, noise_frame, alpha=5.0, beta=0.01)
+
+    plot_time(X_filtered,fs,key, "Filtered Audio Time Domain")
+
+    X_filtered = filter_hp(0,70, X_filtered, fs, N, key)
+
+    X_filtered = filter_lp(6000,22050, X_filtered, fs, N, key)
+
+    plot_time(X_filtered,fs,key, "Bandpass filtered in the Time Domain")
+
+    X_filtered = boost_amplitude(80,2000,X_filtered,fs,N, 10.0) 
 
     plt.figure()   
-    X_2 = np.fft.fft(X)[:N // 2] / N
+    X_2 = np.fft.fft(X_filtered)[:N // 2] / N
     f = np.arange(N // 2) * f_res
     X_mag = 20 * np.log10(np.abs(X_2[1:]) + 1e-12)
+    # X_mag = 20 * np.log10(np.abs(X_2[1:]))
     plt.plot(f[1:],X_mag)
 
-    X = boost_amplitude(2000,6000,X,fs, 10)
+    # X_filtered = np.tanh(X_filtered) # adds a weird distortion
 
-    plt.figure()
-    X_2 = np.fft.fft(X)[:N // 2] / N
-    f = np.arange(N // 2) * f_res
-    X_mag = 20 * np.log10(np.abs(X_2[1:]) + 1e-12)
-    plt.plot(f[1:],X_mag)
+    # X_filtered = boost_amplitude(2000,3000,X_filtered,fs,N, 30.0)
 
-    audio_int16 = (X * 32767).astype(np.int16)
+    # plt.figure()
+    # X_2 = np.fft.fft(X_filtered)[:N // 2] / N
+    # f = np.arange(N // 2) * f_res
+    # X_mag = 20 * np.log10(np.abs(X_2[1:]) + 1e-12)
+    # plt.plot(f[1:],X_mag)
+
+    audio_int16 = (X_filtered * 32767).astype(np.int16)
     if key == '5cm' :
         wavfile.write("filtered_audio_test_5cm.wav", 44100, audio_int16)
     else: wavfile.write("filtered_audio_test_1m.wav", 44100, audio_int16)

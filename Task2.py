@@ -58,42 +58,28 @@ def plot_annotated(x, fs, key, c, f, m):
     plt.title(f'Annotated spectrum ({key})')
     plt.legend(loc='lower left', fontsize=8)
 
-def remove_hvac_noise(x, fs, N, N_initial_noise, frame_size=2048, alpha=2.0, beta=0.02):
-    hop_size = frame_size // 2  # 50% overlap for smooth blending
+def clear_noise(x, fs, N, N_initial_noise, frame_size, alpha, beta):
+    hop_size = frame_size // 2  # 50% overlap into the other frames so that it blends well
     n = np.arange(frame_size)
-    window = window = 0.5 - 0.5 * np.cos(2 * np.pi * n / (frame_size - 1)) # Hanning filtering window
-    
-    # 1. Capture the noise profile from a known quiet block at the start
-    noise_block = x[N_initial_noise:N] * window
-    X_noise = np.fft.fft(noise_block)
-    noise_mag = np.abs(X_noise)
-    
-    output_signal = np.zeros(N)
-    
-    # 2. Loop through the entire audio file frame-by-frame
+    window = window = 0.5 - 0.5 * np.cos(2 * np.pi * n / (frame_size - 1)) # Hanning filtering window, smoothens the edges of the frames
+    noise_block = x[N_initial_noise:N] * window #Holds found block of noise at the end of the audio
+    X_noise = np.fft.fft(noise_block) # Finds the fourier coefficients with their respective frequencies of the background noise
+    noise_mag = np.abs(X_noise) # Finds their respective magnitudes
+    X_filtered = np.zeros(N) # Stores filtered values
+
     for i in range(0, N - frame_size, hop_size):
-        # Extract the current frame from the full audio and apply window
-        frame = x[i:i + frame_size] * window
+        current_frame = x[i:i + frame_size] * window # Applies hanning window to current frame, middle of the window is peak amplitude, edges are lower but accumulated
+        X = np.fft.fft(current_frame) # Converts the frame to the frequency domain
+        X_mag = np.abs(X)
+        X_phase = X / (X_mag + 1e-12) #Preserve phase angles, adds a small number to avoid 1/0
         
-        # Convert frame to frequency domain
-        X = np.fft.fft(frame)
-        mag = np.abs(X)
+        cleaned_mag = X_mag - (alpha * noise_mag) # 3. Subtract the noise profile magnitude from this frame's magnitude 
+        cleaned_mag = np.maximum(cleaned_mag, beta * X_mag) # If cleaned magnitude < 0, replace so that it is just above 0 since magnitudes cannot be negative. 
+        X_clean = cleaned_mag * X_phase # Reconstructs X but after noise subtraction
+        frame_back = np.fft.ifft(X_clean).real * window 
+        X_filtered[i:i + frame_size] += frame_back # This is where the frames overlap and the edges accumulate smoothly
         
-        # Isolate the phase angles so we don't distort timing/speech quality
-        phase = X / (mag + 1e-12)
-        # phase = X / (mag)
-        
-        # 3. Subtract the noise profile magnitude from this frame's magnitude
-        cleaned_mag = mag - (alpha * noise_mag)
-        # Apply a spectral floor (beta) so bins aren't forced to absolute zero (prevents harsh artifacts)
-        cleaned_mag = np.maximum(cleaned_mag, beta * mag)
-        # 4. Reconstruct the frame using the cleaned magnitude and original phase
-        X_clean = cleaned_mag * phase
-        # Inverse FFT back to time domain, window again, and add to output
-        frame_back = np.fft.ifft(X_clean).real * window
-        output_signal[i:i + frame_size] += frame_back
-        
-    return output_signal
+    return X_filtered 
 
 def filter_hp(initial_frequency,final_frequency,x,fs,N, key):
     X = np.fft.fft(x) #fft of audio signal
@@ -105,10 +91,7 @@ def filter_hp(initial_frequency,final_frequency,x,fs,N, key):
     F_smoothing = np.arange(0,1,0.005)
     X[k_final:k_final+200] *= F_smoothing
     X[-(k_final+200):-k_final] *= F_smoothing[::-1] 
-    # X[0:k_final] = 0 # temp amplification of audio signal
-    # X[-k_final:] = 0
-
-
+        
     X_filtered = np.fft.ifft(X).real # inverse fft of adjusted signal
     return X_filtered # outputting a complex output array
 
@@ -119,7 +102,7 @@ def filter_lp(initial_frequency,final_frequency,x,fs, N, key):
     k_final = int(final_frequency / f_res)
     X[k_initial:k_final] = 1e-12 # temp amplification of audio signal
     X[-k_final:-k_initial] = 1e-12
-    
+
     F_smoothing = np.arange(0,1,0.005)
     X[k_initial-200:k_initial] *= F_smoothing[::-1]
     X[-k_initial:-(k_initial-200)] *= F_smoothing
@@ -142,11 +125,28 @@ def boost_amplitude(initial_frequency, final_frequency, x, fs,N, modifier):
         X[k_initial-200:k_initial] *= Fc_smoothing[::-1]
         X[-k_initial:-(k_initial-200)] *= Fc_smoothing
 
-    X[k_final:k_final+200] *= Fc_smoothing # No If statement required as higher frequencies will be cut 
-    X[-(k_final+200):-k_final] *= Fc_smoothing[::-1]
+    X[k_final:k_final+200] *= Fc_smoothing[::-1] # No If statement required as higher frequencies will be cut 
+    X[-(k_final+200):-k_final] *= Fc_smoothing
 
     X_filtered = np.fft.ifft(X).real # inverse fft of adjusted signal
     return X_filtered # outputting a complex output array
+
+
+def add_bass_saturation(x, drive=2.0):
+  """Applies soft-clipping saturation to generate harmonics,
+
+  making weak bass feel thicker and more present.
+  """
+  # 'drive' amplifies the signal before clipping, pushing it into the non-linear zone
+  driven_signal = x * drive
+
+  # np.tanh (hyperbolic tangent) is the classic formula for warm, "analog-style" soft clipping
+  saturated_signal = np.tanh(driven_signal)
+
+  # Scale it back down slightly so it doesn't clip your overall output volume
+  output = saturated_signal / np.tanh(drive)
+
+  return output
 
 data = {k: load(c['file']) for k, c in REC.items()}
 
@@ -161,7 +161,7 @@ for key, c in REC.items():
 
     noise_N = N - N_initial_noise # Sample length of Noise
     f_res = 44100/N # Frequency Resolution Calculation
-    f_res_noise = 44100/(N-N_initial_noise) # Frequency Resoluation of Noise Block
+    f_res_noise = 44100/(N-N_initial_noise) # Frequency Resolution of Noise Block
     X_noise = x[N_initial_noise:N]
     noise_frame = N - N_initial_noise
 
@@ -172,43 +172,27 @@ for key, c in REC.items():
     plt.figure()
     f = np.arange(noise_N//2) * f_res_noise
     noise_mag = 20 * np.log10(np.abs(Xn_fft[1:]) + 1e-12)
-    # noise_mag = 20 * np.log10(np.abs(Xn_fft[1:]))
     plt.plot(f[1:],noise_mag)
 
-    x = x*2
+    X_filtered = clear_noise(x, fs, N, N_initial_noise, noise_frame, 2 , 0.1)
 
-    X_filtered = remove_hvac_noise(x, fs, N, N_initial_noise, noise_frame, alpha=5.0, beta=0.01)
+    # plot_time(X_filtered,fs,key, "Filtered Audio Time Domain")
 
-    plot_time(X_filtered,fs,key, "Filtered Audio Time Domain")
+    # X_filtered = filter_lp(8000,22050, X_filtered, fs, N, key)
 
-    X_filtered = filter_hp(0,70, X_filtered, fs, N, key)
+    # plot_time(X_filtered,fs,key, "Bandpass filtered in the Time Domain")
 
-    X_filtered = filter_lp(6000,22050, X_filtered, fs, N, key)
+    X_filtered = boost_amplitude(100, 500,X_filtered,fs,N, 3.0) 
 
-    plot_time(X_filtered,fs,key, "Bandpass filtered in the Time Domain")
+    X_filtered = boost_amplitude(500, 2000,X_filtered,fs,N, 2) # starting from 900 so the full band from 125 to 2000 is boosted either directly or by smoothing
+    X_filtered = boost_amplitude(2000,4000,X_filtered,fs,N, 0.3) # hissing and high frequency consonants are attenuated
+    X_filtered = boost_amplitude(4000,8000,X_filtered,fs,N, 0.2) # hissing and high frequency consonants are attenuated
 
-    X_filtered = boost_amplitude(80,2000,X_filtered,fs,N, 10.0) 
-
-    plt.figure()   
-    X_2 = np.fft.fft(X_filtered)[:N // 2] / N
-    f = np.arange(N // 2) * f_res
-    X_mag = 20 * np.log10(np.abs(X_2[1:]) + 1e-12)
-    # X_mag = 20 * np.log10(np.abs(X_2[1:]))
-    plt.plot(f[1:],X_mag)
-
-    # X_filtered = np.tanh(X_filtered) # adds a weird distortion
-
-    # X_filtered = boost_amplitude(2000,3000,X_filtered,fs,N, 30.0)
-
-    # plt.figure()
-    # X_2 = np.fft.fft(X_filtered)[:N // 2] / N
-    # f = np.arange(N // 2) * f_res
-    # X_mag = 20 * np.log10(np.abs(X_2[1:]) + 1e-12)
-    # plt.plot(f[1:],X_mag)
+    if key == "1m": # Extra boost of bass if 1m away
+        X_filtered = add_bass_saturation(X_filtered,3)
+        X_filtered = boost_amplitude(50, 300,X_filtered,fs,N, 5.0) 
 
     audio_int16 = (X_filtered * 32767).astype(np.int16)
-    if key == '5cm' :
-        wavfile.write("filtered_audio_test_5cm.wav", 44100, audio_int16)
-    else: wavfile.write("filtered_audio_test_1m.wav", 44100, audio_int16)
+    wavfile.write(f"enhanced_speech_{key}.wav", 44100, audio_int16)
 
 plt.show()

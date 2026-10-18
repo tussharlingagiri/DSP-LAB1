@@ -36,7 +36,6 @@ def load(path):
     return fs, x / 2147483647.0
 
 def plot_time(X, fs, key, title, fromDomain="time"):
-
     if fromDomain == "frequency":
         X = np.fft.ifft(X).real # convert to time domain
 
@@ -46,7 +45,6 @@ def plot_time(X, fs, key, title, fromDomain="time"):
     plt.title(f' {title} ({key})')
 
 def plot_freq(x, N, key, title, fromDomain="time"):
-
     if fromDomain == "time":
         X = np.fft.fft(x)[:N // 2] / N
     elif fromDomain == "frequency":
@@ -83,7 +81,27 @@ def clear_noise(x, N, N_initial_noise, frame_size, alpha, beta):
         
     return X_filtered 
 
-def boost_amplitude(initial_frequency, final_frequency, X, f_res, modifier):
+def filter_hp(final_frequency,X,f_res):
+    k_final = int(final_frequency / f_res)
+    X[0:k_final] = 1e-12
+    X[-k_final:] = 1e-12
+    F_smoothing = np.arange(0,1,0.05)
+    X[k_final:k_final+20] *= F_smoothing # Low amount of bins to affect vowels less
+    X[-(k_final+20):-k_final] *= F_smoothing[::-1] 
+    return X
+
+def filter_lp(initial_frequency,X,f_res):
+    k_initial = int(initial_frequency / f_res)
+    k_final = int(22050 / f_res) # 44100/2 = 22050hz
+    X[k_initial:k_final] = 1e-12
+    X[-k_final:-k_initial] = 1e-12
+    F_smoothing = np.arange(0,1,0.005)
+    X[k_initial-200:k_initial] *= F_smoothing[::-1]
+    X[-k_initial:-(k_initial-200)] *= F_smoothing
+    return X
+
+
+def apply_gain(initial_frequency, final_frequency, X, f_res, modifier):
     k_initial = int(initial_frequency / f_res)
     k_final = int(final_frequency / f_res)
     X[k_initial:k_final] *= modifier # Amplification of chosen Fourier Coefficients
@@ -104,7 +122,6 @@ def boost_amplitude(initial_frequency, final_frequency, X, f_res, modifier):
 data = {k: load(c['file']) for k, c in REC.items()}
 
 for key, c in REC.items():
-
     fs, x = data[key]
     N = len(x) # Total samples
 
@@ -125,21 +142,25 @@ for key, c in REC.items():
     plot_time(x_noise, fs, key, "Noise in Time Domain")
     plot_freq(x_noise, noise_N, key, "Noise in Frequency Domain")
 
-    X_filtered = clear_noise(x, N, N_initial_noise, noise_N, 2 , 0.1)
-
-    plot_time(X_filtered,fs,key, "Filtered Audio Time Domain")
+    X_filtered = clear_noise(x, N, N_initial_noise, noise_N, 2 , 0.01) # Removes magnitude of noise from the entire bandwidth
 
     X_filtered = np.fft.fft(X_filtered) #fft of audio signal
 
+    X_filtered = filter_hp(80, X_filtered, f_res)
+    if key == '5cm':
+        X_filtered = filter_lp(18000,X_filtered,f_res)
+    elif key == '1m':
+        X_filtered = filter_lp(15000, X_filtered, f_res)
+
+    plot_time(X_filtered,fs,key, "Filtered Audio Time Domain", "frequency")
     plot_freq(X_filtered, N, key, "Filtered Audio Frequency Domain", "frequency")
 
-    X_filtered = boost_amplitude(100, 500,X_filtered,f_res, 3.0) 
-    X_filtered = boost_amplitude(1000, 2000,X_filtered,f_res, 2.0) # starting from 900 so the full band from 125 to 2000 is boosted either directly or by smoothing
-    X_filtered = boost_amplitude(3000,4000,X_filtered,f_res, 0.3) # hissing and high frequency consonants are attenuated
-    X_filtered = boost_amplitude(4000,8000,X_filtered,f_res, 0.2) # hissing and high frequency consonants are attenuated
-
-    if key == "1m": # Extra boost of bass if 1m away
-        X_filtered = boost_amplitude(50, 300,X_filtered,f_res, 3.0) 
+    if key == '5cm': # Boost of vowel fundamentals & reduction of consonants if 5cm away
+        X_filtered = apply_gain(80, 2000,X_filtered,f_res, 2)
+        X_filtered = apply_gain(3000, 15000,X_filtered,f_res, 0.3)
+    elif key == "1m": # Boost of vowel fundamentals & consonants if 1m away
+        X_filtered = apply_gain(80, 2000,X_filtered,f_res, 3)
+        X_filtered = apply_gain(2000, 12000,X_filtered,f_res, 2)
 
     X_filtered = np.fft.ifft(X_filtered).real # inverse fft of adjusted signal
 

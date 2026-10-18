@@ -38,7 +38,6 @@ def load(path):
 def plot_time(X, fs, key, title, fromDomain="time"):
     if fromDomain == "frequency":
         X = np.fft.ifft(X).real # convert to time domain
-
     plt.figure()
     plt.plot(np.arange(len(X)) / fs, X)
     plt.xlabel('Time [s]'); plt.ylabel('Normalised amplitude')
@@ -49,7 +48,6 @@ def plot_freq(x, N, key, title, fromDomain="time"):
         X = np.fft.fft(x)[:N // 2] / N
     elif fromDomain == "frequency":
         X = x[:N // 2] / N
-
     plt.figure()
     f_res = 44100/N # Frequency Resolution Calculation
     f = np.arange(N//2) * f_res
@@ -100,7 +98,6 @@ def filter_lp(initial_frequency,X,f_res):
     X[-k_initial:-(k_initial-200)] *= F_smoothing
     return X
 
-
 def apply_gain(initial_frequency, final_frequency, X, f_res, modifier):
     k_initial = int(initial_frequency / f_res)
     k_final = int(final_frequency / f_res)
@@ -119,6 +116,8 @@ def apply_gain(initial_frequency, final_frequency, X, f_res, modifier):
     X[-(k_final+200):-k_final] *= Fc_smoothing
     return X # outputting a complex output array
 
+#Main code, code to plot figures will be commented for efficiency.
+
 data = {k: load(c['file']) for k, c in REC.items()}
 
 for key, c in REC.items():
@@ -134,13 +133,13 @@ for key, c in REC.items():
     f_res_noise = 44100/(N-N_initial_noise) # Frequency Resolution of Noise Block
     x_noise = x[N_initial_noise:N]
     
-    plot_time(x, fs, key, "Unfiltered Audio Time Domain")
-    plot_freq(x, N, key, "Unfiltered Audio Frequency Domain")
+    # plot_time(x, fs, key, "Unfiltered Audio Time Domain")
+    # plot_freq(x, N, key, "Unfiltered Audio Frequency Domain")
 
     Xn_fft = np.fft.fft(x_noise)[:noise_N // 2] / noise_N
 
-    plot_time(x_noise, fs, key, "Noise in Time Domain")
-    plot_freq(x_noise, noise_N, key, "Noise in Frequency Domain")
+    # plot_time(x_noise, fs, key, "Noise in Time Domain")
+    # plot_freq(x_noise, noise_N, key, "Noise in Frequency Domain")
 
     X_filtered = clear_noise(x, N, N_initial_noise, noise_N, 2 , 0.01) # Removes magnitude of noise from the entire bandwidth
 
@@ -152,8 +151,8 @@ for key, c in REC.items():
     elif key == '1m':
         X_filtered = filter_lp(15000, X_filtered, f_res)
 
-    plot_time(X_filtered,fs,key, "Filtered Audio Time Domain", "frequency")
-    plot_freq(X_filtered, N, key, "Filtered Audio Frequency Domain", "frequency")
+    # plot_time(X_filtered,fs,key, "Filtered Audio Time Domain", "frequency")
+    # plot_freq(X_filtered, N, key, "Filtered Audio Frequency Domain", "frequency")
 
     if key == '5cm': # Boost of vowel fundamentals & reduction of consonants if 5cm away
         X_filtered = apply_gain(80, 2000,X_filtered,f_res, 2)
@@ -164,11 +163,10 @@ for key, c in REC.items():
 
     X_filtered = np.fft.ifft(X_filtered).real # inverse fft of adjusted signal
 
-    plot_time(X_filtered, fs, key, "Boosted Audio Time Domain")
-    plot_freq(X_filtered, N, key, "Boosted Audio Frequency Domain")
+    # plot_time(X_filtered, fs, key, "Boosted Audio Time Domain")
+    # plot_freq(X_filtered, N, key, "Boosted Audio Frequency Domain")
 
     audio_int16 = (X_filtered * 32767).astype(np.int16)
     wavfile.write(f"enhanced_speech_{key}.wav", 44100, audio_int16)
     
-
-plt.show()
+# plt.show()

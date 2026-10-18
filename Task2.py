@@ -122,7 +122,7 @@ for key, c in REC.items():
 
     Xn_fft = np.fft.fft(x_noise)[:noise_N // 2] / noise_N
 
-    plot_time(x_noise, fs, key, "Unfiltered Audio Time Domain")
+    plot_time(x_noise, fs, key, "Noise in Time Domain")
     plot_freq(x_noise, noise_N, key, "Noise in Frequency Domain")
 
     X_filtered = clear_noise(x, N, N_initial_noise, noise_N, 2 , 0.1)
@@ -141,11 +141,10 @@ for key, c in REC.items():
     if key == "1m": # Extra boost of bass if 1m away
         X_filtered = boost_amplitude(50, 300,X_filtered,f_res, 3.0) 
 
-    plot_freq(X_filtered, N, key, "Boosted Audio Frequency Domain", "frequency")
-
     X_filtered = np.fft.ifft(X_filtered).real # inverse fft of adjusted signal
 
     plot_time(X_filtered, fs, key, "Boosted Audio Time Domain")
+    plot_freq(X_filtered, N, key, "Boosted Audio Frequency Domain")
 
     audio_int16 = (X_filtered * 32767).astype(np.int16)
     wavfile.write(f"enhanced_speech_{key}.wav", 44100, audio_int16)

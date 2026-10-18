@@ -35,28 +35,30 @@ def load(path):
     x = x.astype(np.float64)
     return fs, x / 2147483647.0
 
-def plot_time(x, fs, key, title):
+def plot_time(X, fs, key, title, fromDomain="time"):
+
+    if fromDomain == "frequency":
+        X = np.fft.ifft(X).real # convert to time domain
+
     plt.figure()
-    plt.plot(np.arange(len(x)) / fs, x)
+    plt.plot(np.arange(len(X)) / fs, X)
     plt.xlabel('Time [s]'); plt.ylabel('Normalised amplitude')
     plt.title(f' {title} ({key})')
 
-def plot_annotated(x, fs, key, c, f, m):
-    # f, m = spectrum_dB(x, fs)
-    # f, m = filter_bandwidth(2000,22050,x, fs)
-    plt.figure(figsize=(10, 6))
-    plt.semilogx(f, m)
-    for i, f0 in enumerate(c['f0']):
-        plt.axvline(f0, color='r', ls='--',
-                    label=f"Vowel fundamentals ({', '.join(map(str, c['f0']))} Hz)" if i == 0 else None)
-    plt.axvspan(*c['cons_range'], color='orange', alpha=0.2,
-                label=f"Consonants ({c['cons_range'][0]}-{c['cons_range'][1]} Hz)")
-    plt.axvspan(f[0], c['noise_low'], color='grey', alpha=0.3,
-                label=f"Noise (<{c['noise_low']} Hz, >{c['noise_high']} Hz)")
-    plt.axvspan(c['noise_high'], fs / 2, color='grey', alpha=0.3)
+def plot_freq(x, fs, N, key, title, fromDomain="time"):
+
+    if fromDomain == "time":
+        X = np.fft.fft(x)[:N // 2] / N
+    elif fromDomain == "frequency":
+        X = x[:N // 2] / N
+
+    plt.figure()
+    f_res = 44100/N # Frequency Resolution Calculation
+    f = np.arange(N//2) * f_res
+    mag = 20 * np.log10(np.abs(X[1:]) + 1e-12)
+    plt.semilogx(f[1:], mag)
     plt.xlabel('Frequency [Hz]'); plt.ylabel('Magnitude [dB]')
-    plt.title(f'Annotated spectrum ({key})')
-    plt.legend(loc='lower left', fontsize=8)
+    plt.title(f' {title} ({key})')
 
 def clear_noise(x, fs, N, N_initial_noise, frame_size, alpha, beta):
     hop_size = frame_size // 2  # 50% overlap into the other frames so that it blends well
@@ -81,41 +83,11 @@ def clear_noise(x, fs, N, N_initial_noise, frame_size, alpha, beta):
         
     return X_filtered 
 
-def filter_hp(initial_frequency,final_frequency,x,fs,N, key):
-    X = np.fft.fft(x) #fft of audio signal
-    f_res = fs / N
-    
-    k_final = int(final_frequency / f_res)
-    X[0:k_final] = 1e-12 # temp amplification of audio signal
-    X[-k_final:] = 1e-12
-    F_smoothing = np.arange(0,1,0.005)
-    X[k_final:k_final+200] *= F_smoothing
-    X[-(k_final+200):-k_final] *= F_smoothing[::-1] 
-        
-    X_filtered = np.fft.ifft(X).real # inverse fft of adjusted signal
-    return X_filtered # outputting a complex output array
-
-def filter_lp(initial_frequency,final_frequency,x,fs, N, key):
-    X = np.fft.fft(x) #fft of audio signal
-    f_res = fs / N
-    k_initial = int(initial_frequency / f_res)
-    k_final = int(final_frequency / f_res)
-    X[k_initial:k_final] = 1e-12 # temp amplification of audio signal
-    X[-k_final:-k_initial] = 1e-12
-
-    F_smoothing = np.arange(0,1,0.005)
-    X[k_initial-200:k_initial] *= F_smoothing[::-1]
-    X[-k_initial:-(k_initial-200)] *= F_smoothing
-    X_filtered = np.fft.ifft(X).real # inverse fft of adjusted signal
-    return X_filtered # outputting a complex output array
-
-def boost_amplitude(initial_frequency, final_frequency, x, fs,N, modifier):
-    X = np.fft.fft(x) #fft of audio signal
-    f_res = fs / N
+def boost_amplitude(initial_frequency, final_frequency, X, f_res,N, modifier):
     k_initial = int(initial_frequency / f_res)
     k_final = int(final_frequency / f_res)
     X[k_initial:k_final] *= modifier # Amplification of chosen Fourier Coefficients
-    X[-k_final:-k_initial] *= modifier
+    X[-k_final:-k_initial] *= modifier 
 
     Fc_smoothing = np.linspace(1,modifier,200) # Fourier Coefficient smoothing from normal power (1) towards the amplifying value
     if k_initial-200 < 0: #If we want to boost lower than 200hz, start from 0
@@ -127,26 +99,7 @@ def boost_amplitude(initial_frequency, final_frequency, x, fs,N, modifier):
 
     X[k_final:k_final+200] *= Fc_smoothing[::-1] # No If statement required as higher frequencies will be cut 
     X[-(k_final+200):-k_final] *= Fc_smoothing
-
-    X_filtered = np.fft.ifft(X).real # inverse fft of adjusted signal
-    return X_filtered # outputting a complex output array
-
-
-def add_bass_saturation(x, drive=2.0):
-  """Applies soft-clipping saturation to generate harmonics,
-
-  making weak bass feel thicker and more present.
-  """
-  # 'drive' amplifies the signal before clipping, pushing it into the non-linear zone
-  driven_signal = x * drive
-
-  # np.tanh (hyperbolic tangent) is the classic formula for warm, "analog-style" soft clipping
-  saturated_signal = np.tanh(driven_signal)
-
-  # Scale it back down slightly so it doesn't clip your overall output volume
-  output = saturated_signal / np.tanh(drive)
-
-  return output
+    return X # outputting a complex output array
 
 data = {k: load(c['file']) for k, c in REC.items()}
 
@@ -162,37 +115,40 @@ for key, c in REC.items():
     noise_N = N - N_initial_noise # Sample length of Noise
     f_res = 44100/N # Frequency Resolution Calculation
     f_res_noise = 44100/(N-N_initial_noise) # Frequency Resolution of Noise Block
-    X_noise = x[N_initial_noise:N]
-    noise_frame = N - N_initial_noise
-
+    x_noise = x[N_initial_noise:N]
+    
     plot_time(x, fs, key, "Unfiltered Audio Time Domain")
+    plot_freq(x, fs, N, key, "Unfiltered Audio Frequency Domain")
 
-    Xn_fft = np.fft.fft(X_noise)[:noise_N // 2] / noise_N
+    Xn_fft = np.fft.fft(x_noise)[:noise_N // 2] / noise_N
 
-    plt.figure()
-    f = np.arange(noise_N//2) * f_res_noise
-    noise_mag = 20 * np.log10(np.abs(Xn_fft[1:]) + 1e-12)
-    plt.plot(f[1:],noise_mag)
+    plot_time(x_noise, fs, key, "Unfiltered Audio Time Domain")
+    plot_freq(x_noise, fs, noise_N, key, "Noise in Frequency Domain")
 
-    X_filtered = clear_noise(x, fs, N, N_initial_noise, noise_frame, 2 , 0.1)
+    X_filtered = clear_noise(x, fs, N, N_initial_noise, noise_N, 2 , 0.1)
 
-    # plot_time(X_filtered,fs,key, "Filtered Audio Time Domain")
+    plot_time(X_filtered,fs,key, "Filtered Audio Time Domain")
 
-    # X_filtered = filter_lp(8000,22050, X_filtered, fs, N, key)
+    X_filtered = np.fft.fft(X_filtered) #fft of audio signal
 
-    # plot_time(X_filtered,fs,key, "Bandpass filtered in the Time Domain")
+    plot_freq(X_filtered, fs, N, key, "Filtered Audio Frequency Domain", "frequency")
 
-    X_filtered = boost_amplitude(100, 500,X_filtered,fs,N, 3.0) 
-
-    X_filtered = boost_amplitude(500, 2000,X_filtered,fs,N, 2) # starting from 900 so the full band from 125 to 2000 is boosted either directly or by smoothing
-    X_filtered = boost_amplitude(2000,4000,X_filtered,fs,N, 0.3) # hissing and high frequency consonants are attenuated
-    X_filtered = boost_amplitude(4000,8000,X_filtered,fs,N, 0.2) # hissing and high frequency consonants are attenuated
+    X_filtered = boost_amplitude(100, 500,X_filtered,f_res,N, 3.0) 
+    X_filtered = boost_amplitude(1000, 2000,X_filtered,f_res,N, 2.0) # starting from 900 so the full band from 125 to 2000 is boosted either directly or by smoothing
+    X_filtered = boost_amplitude(3000,4000,X_filtered,f_res,N, 0.3) # hissing and high frequency consonants are attenuated
+    X_filtered = boost_amplitude(4000,8000,X_filtered,f_res,N, 0.2) # hissing and high frequency consonants are attenuated
 
     if key == "1m": # Extra boost of bass if 1m away
-        X_filtered = add_bass_saturation(X_filtered,3)
-        X_filtered = boost_amplitude(50, 300,X_filtered,fs,N, 5.0) 
+        X_filtered = boost_amplitude(50, 300,X_filtered,f_res,N, 3.0) 
+
+    plot_freq(X_filtered, fs, N, key, "Boosted Audio Frequency Domain", "frequency")
+
+    X_filtered = np.fft.ifft(X_filtered).real # inverse fft of adjusted signal
+
+    plot_time(X_filtered, fs, key, "Boosted Audio Time Domain")
 
     audio_int16 = (X_filtered * 32767).astype(np.int16)
     wavfile.write(f"enhanced_speech_{key}.wav", 44100, audio_int16)
+    
 
 plt.show()

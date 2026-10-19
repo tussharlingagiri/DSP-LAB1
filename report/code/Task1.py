@@ -46,7 +46,7 @@ def spectrum_dB(x, fs):
 def seg(x, fs, t0, t1):
     return x[int(t0 * fs):int(t1 * fs)]
 
-# ---- REQUIRED ---------------------------------------------------------------
+
 def plot_time(x, fs, key):
     plt.figure()
     plt.plot(np.arange(len(x)) / fs, x)
@@ -72,7 +72,7 @@ def plot_annotated(x, fs, key, c):
     plt.legend(loc='lower left', fontsize=8)
     plt.savefig(f'task1_spectrum_{key}.pdf')
  
-# ---- SUPPORTING -------------------------------------------------------------
+
 # short FFTs over time, used to find where the vowels / consonants / silence are.
 # Hann window to reduce leakage between bins, 50% overlap
 def plot_spectrogram(x, fs, key, win=1024, hop=512):
